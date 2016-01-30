@@ -1,0 +1,419 @@
+---
+title: "Untitled"
+output: word_document
+---
+
+```{r}
+setwd("C:/I")
+library(RSQLite)
+imbd = dbConnect(SQLite(), "lean_imdbpy.db")
+
+# look tables in the data
+dbListTables(imbd)
+```
+
+
+**1.How many actors are there in the database? How many movies?**
+
+```{r Q1}
+# rows in name table
+dbGetQuery(imbd, "SELECT COUNT(*) AS NumberofActors From name")
+
+# rows in title table, limit kind = "movie"
+dbGetQuery(imbd, "SELECT COUNT(*) AS Numberofmovies
+                  From title
+                       JOIN kind_type   
+                            ON title.kind_id = kind_type.id
+                  WHERE kind = 'movie'") 
+ 
+```
+
+**2.What time period does the database cover?**
+
+```{r}
+# look at title table (won't show the output in the homwwork)
+#dbGetQuery(imbd, "SELECT * From title LIMIT 5")
+```
+
+```{r}
+# get max year
+dbGetQuery(imbd, "SELECT MAX(production_year) From title")
+
+# get MIN year
+dbGetQuery(imbd, "SELECT MIN(production_year) From title")
+
+```
+
+**3.What proportion of the actors are female? male?**
+
+```{r}
+# counts by gender and devide by the total count in name
+dbGetQuery(imbd, "SELECT gender, count(*)*100 / (SELECT COUNT(*) 
+                                                 FROM name) 
+                  AS proportion
+                  From name
+                  GROUP BY gender")
+```
+
+**4. What proportion of the entries in the movies table are actual movies and what proportion are television series, etc.?**
+This one is similar like question 3, so I use the same idea to do it, just replace gender by kind and use the combine of title and kind_type table
+
+```{r}
+dbGetQuery(imbd, "SELECT kind, COUNT(*)*100 / (SELECT COUNT(*) 
+                                               FROM title) 
+                  AS proportion
+                  From title
+                       JOIN kind_type   
+                            ON title.kind_id = kind_type.id
+                  GROUP BY kind")
+
+```
+
+**5.How many genres are there? What are their names/descriptions?**
+
+```{r}
+# look at info_type table (won't show it in the homework)
+#dbGetQuery(imbd, "SELECT *  From info_type LIMIT 5")
+```
+
+```{r}
+# distinct genres type, get genres' names
+genre = dbGetQuery(imbd, "SELECT DISTINCT info  
+                          From movie_info 
+                          WHERE info_type_id = 3 ")
+genre[,1]
+```
+
+**6.List the 10 most common genres of movies, showing the number of movies in each of these genres.**
+
+```{r}
+dbGetQuery(imbd, "SELECT movie_info.info, count(*) AS Frequncy 
+                  From title
+                       JOIN kind_type   
+                            ON title.kind_id = kind_type.id
+                       JOIN movie_info 
+                            ON title.id = movie_info.movie_id
+                  WHERE info_type_id = 3 
+                  AND kind_type.kind = 'movie'
+                  GROUP BY movie_info.info
+                  ORDER BY Frequncy DESC 
+                  LIMIT 10")
+
+
+```
+
+
+
+**7.Find all movies with the keyword 'space'. How many are there? What are the years these were released? and who were the top 5 actors in each of these movies?**
+
+```{r}
+# count the number of movies where keyword = space
+dbGetQuery(imbd, "SELECT count(*) AS MovieswithSpace 
+                  FROM title 
+                       JOIN kind_type   
+                            ON title.kind_id = kind_type.id
+                       JOIN movie_keyword 
+                             ON movie_keyword .movie_id = title.id
+                       JOIN keyword
+                             ON keyword.id = movie_keyword.keyword_id
+                  WHERE keyword.keyword = 'space' 
+                  AND kind = 'movie'")
+```
+
+For the years of these movie, I use the same way as above, I only change the return value to be production_year.
+
+```{r}
+year = dbGetQuery(imbd, "SELECT production_year 
+                         FROM title 
+                              JOIN kind_type   
+                                   ON title.kind_id = kind_type.id
+                              JOIN movie_keyword 
+                                   ON movie_keyword .movie_id = title.id
+                              JOIN keyword
+                                   ON keyword.id = movie_keyword.keyword_id
+                          WHERE keyword.keyword = 'space'
+                          AND kind = 'movie' ")
+year[,1]
+```
+
+```{r}
+
+# creat keyword and movie_id temporary table
+dbGetQuery(imbd, "CREATE TEMPORARY TABLE space_movie AS 
+                  SELECT  title.id, title.title
+                  FROM title 
+                       JOIN kind_type   
+                            ON title.kind_id = kind_type.id
+                       JOIN movie_keyword 
+                             ON movie_keyword.movie_id = title.id
+                       JOIN keyword
+                             ON keyword.id = movie_keyword.keyword_id
+                  WHERE keyword.keyword = 'space'
+                  AND kind = 'movie'")
+
+# get the top five actors name, billing position in 1 to 5 for each movies. 
+dbGetQuery(imbd, "SELECT  name.name, cast_info.nr_order, space_movie1.title
+                  FROM space_movie1
+                       JOIN title
+                             ON title
+                       JOIN cast_info
+                             ON space_movie1.id = cast_info.movie_id
+                       JOIN name
+                             ON cast_info.person_id = name.id
+                  WHERE cast_info.nr_order IN (1,2,3,4,5) 
+                  LIMIT 5 ")
+
+
+
+```
+
+ 
+** 8.Has the number of movies in each genre changed over time? Plot the overall number of movies in each year over time, and for each genre.**
+ 
+
+```{r}
+num_movie = dbGetQuery(imbd, "SELECT production_year, info
+                  From movie_info 
+                       JOIN title
+                            ON title.id = movie_info.movie_id
+                       JOIN kind_type   
+                            ON title.kind_id = kind_type.id
+                  WHERE info_type_id = 3 
+                  AND kind = 'movie'
+                  AND production_year IS NOT NULL
+                  ORDER BY production_year")
+
+# use ggplot to draw the number of movies in each year
+library(ggplot2)
+ggplot(num_movie, aes(x=production_year , fill=info )) + geom_bar() + ggtitle("Genre by year")
+
+```
+
+**#9 Who are the actors that have been in the most movies? List the top 20.**
+
+```{r}
+dbGetQuery(imbd, "SELECT  name, COUNT(*) AS appear 
+                  FROM title 
+                       JOIN kind_type   
+                            ON title.kind_id = kind_type.id
+                       JOIN cast_info 
+                             ON cast_info.movie_id = title.id
+                       JOIN name
+                             ON name.id = cast_info.person_id
+                  WHERE kind = 'movie'
+                  GROUP BY name
+                  ORDER BY appear DESC
+                  LIMIT 20")
+```
+
+** 10 Who are the actors that have had the most number of movies with "top billing", i.e., billed as 1, 2 or 3? For each actor, also show the years these movies spanned?**
+
+```{r}
+# why need cast_info.movie_id
+actor10 = sapply(1:3, function(x) { 
+      y = paste0("SELECT  name, nr_order, cast_info.movie_id, COUNT(*) AS appear 
+                  FROM title
+                       JOIN kind_type   
+                            ON title.kind_id = kind_type.id
+                       JOIN cast_info
+                             ON title.id = cast_info.movie_id
+                       JOIN name
+                             ON cast_info.person_id = name.id
+                  WHERE cast_info.nr_order = ",
+                  x,
+                  "
+                  AND kind = 'movie'
+                  GROUP BY name 
+                  ORDER BY appear DESC
+                  LIMIT 5")
+      dbGetQuery(imbd,y)
+                               })
+```
+
+
+```{r}
+year = sapply(1:3, function(x) {
+            y = paste0("SELECT name, nr_order, cast_info.movie_id, MAX(production_year), COUNT(*) AS appear 
+                  FROM title
+                       JOIN kind_type   
+                            ON title.kind_id = kind_type.id
+                       JOIN cast_info
+                             ON title.id = cast_info.movie_id
+                       JOIN name
+                             ON cast_info.person_id = name.id
+                  WHERE cast_info.nr_order = ",
+                  x,
+                  "
+                  AND kind = 'movie'
+                  GROUP BY name 
+                  ORDER BY appear DESC
+                  LIMIT 5")
+            dbGetQuery(imbd,y)
+                             })
+```
+
+```{r}
+dbGetQuery(imbd,"SELECT name, nr_order, cast_info.movie_id, MAX(production_year), COUNT(*) AS appear 
+                  FROM title
+                       JOIN cast_info
+                             ON title.id = cast_info.movie_id
+                       JOIN name
+                             ON cast_info.person_id = name.id
+                  WHERE cast_info.nr_order = 1
+                  GROUP BY name 
+                  ORDER BY appear DESC
+                  LIMIT 5")
+```
+
+**11 Who are the 10 actors that performed in the most movies within any given year? What are their names, the year they starred in these movies and the names of the movies?**
+
+
+```{r}
+dbGetQuery(imbd, "CREATE TABLE question11 AS 
+                  SELECT title.production_year, name.name, name.id, COUNT(*) AS appear 
+                  FROM title
+                       JOIN kind_type   
+                            ON title.kind_id = kind_type.id
+                       JOIN cast_info
+                             ON title.id = cast_info.movie_id
+                       JOIN name
+                             ON cast_info.person_id = name.id
+                  WHERE kind = 'movie'
+                  GROUP BY title.production_year, name.name
+                  ORDER BY appear DESC
+                  LIMIT 10")
+```
+
+
+```{r}
+dbGetQuery(imbd, "SELECT MIN(title.production_year), name.name 
+                  FROM title
+                       JOIN kind_type   
+                            ON title.kind_id = kind_type.id
+                       JOIN cast_info
+                             ON title.id = cast_info.movie_id
+                       JOIN question11
+                             ON cast_info.person_id = name.id
+                  WHERE kind = 'movie'
+                  GROUP BY name.name")
+```
+
+```{r}
+dbGetQuery(imbd, "SELECT title.title, name.name 
+                  FROM title
+                       JOIN kind_type   
+                            ON title.kind_id = kind_type.id
+                       JOIN cast_info
+                             ON title.id = cast_info.movie_id
+                       JOIN question11
+                             ON cast_info.person_id = name.id
+                  WHERE kind = 'movie'
+                  GROUP BY name.name")
+```
+
+
+**12 Who are the 10 actors that have the most aliases**
+
+```{r}
+dbGetQuery(imbd, "SELECT name.name, count(*) AS appear
+                  FROM aka_name
+                       JOIN name
+                            ON aka_name.person_id = name.id
+                  GROUP BY aka_name.person_id
+                  ORDER BY appear DESC
+                  LIMIT 10")
+```
+
+**13Networks: Pick a (lead) actor who has been in at least 20 movies. Find all of the other actors that have appeared in a movie with that person. For each of these, find all the people they have appeared in a move with it. Use this to create a network/graph of who has appeared with who. Use the igraph or statnet packages to display this network. **
+
+```{r}
+# join the title, cast_info, and name table, find the actors name and id who have been in exact 21 movies.
+ dbGetQuery(imbd, "SELECT name.id, name.name, COUNT(*) AS appear 
+                  FROM title 
+                       JOIN kind_type   
+                            ON title.kind_id = kind_type.id
+                       JOIN cast_info
+                            ON title.id = cast_info.movie_id
+                       JOIN name
+                            ON cast_info.person_id = name.id
+                  WHERE kind = 'movie'
+                  GROUP BY name.name
+                  HAVING appear = 21                
+                  ORDER BY appear DESC
+                  LIMIT 5 ")
+
+
+       id                name appear
+1 4199871 A Ljungberg, Markus     21
+2     913        Aalam, Steve     21
+3 2261940      Aaltonen, Sari     21
+4 4635240     Aaron, David L.     21
+5    1282         Aaron, Mark     21
+
+
+
+
+ dbGetQuery(imbd, " CREATE TABLE movie_id AS 
+                    SELECT title.id 
+                    FROM title 
+                         JOIN cast_info
+                              ON title.id = cast_info.movie_id
+                         JOIN name
+                              ON cast_info.person_id = name.id
+                    WHERE name.id = 913")
+
+
+ dbGetQuery(imbd, "CREATE TABLE first_name AS 
+                    SELECT DISTINCT title.id, name.name, name.id
+                    FROM title 
+                         JOIN movie_id
+                              ON title.id = movie_id.id
+                         JOIN cast_info
+                              ON movie_id.id = cast_info.movie_id
+                         JOIN name
+                              ON cast_info.person_id = name.id ")
+
+ 
+
+ dbGetQuery(imbd, "CREATE TABLE second_movie AS 
+                                SELECT DISTINCT title.id 
+                                FROM title 
+                                      JOIN cast_info
+                                           ON title.id = cast_info.movie_id
+                                      JOIN name
+                                           ON cast_info.person_id = name.id
+                                      JOIN first_name
+                                           ON first_name.id = name.id")
+
+
+
+
+ dbGetQuery(imbd, "CREATE TABLE second_name AS
+                                SELECT DISTINCT title.id, name.name, name.id, cast_info.nr_order
+                                FROM second_movie
+                                      JOIN cast_info
+                                            ON second_movie.id = cast_info.movie_id
+                                      JOIN name
+                                            ON cast_info.person_id = name.id ")
+
+second_movie =  dbGetQuery(imbd, "SELECT * FROM second_movie")
+first_name =  dbGetQuery(imbd, "SELECT * FROM first_name")
+second_name =  dbGetQuery(imbd, "SELECT * FROM second_name")
+
+names(first_name) = c("name", "name.id", "title.id")
+names(second_name) = c("title.id", "name", "name.id", "nr_order")
+
+top_bill = second_name[second_name[,4] == 1, ]
+top_bill = na.omit(top_bill)
+top_bill$to = NA
+
+
+data = lapply(1:nrow(first_name), function(x) top_bill[top_bill[,1] == first_name[x,3],5] = first_name[x, 1])
+
+for(i in 1:nrow(first_name))
+{
+    
+    top_bill[top_bill[,1] == first_name[i,3],5] = first_name[i,1]
+}
+
+```
